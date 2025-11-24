@@ -9,8 +9,6 @@ __pycache__/
 .vscode/
 # Data files - csvs
 *.csv
-# Data files - zips
-*.zip
 
 # DS_Store files
 .DS_Store
