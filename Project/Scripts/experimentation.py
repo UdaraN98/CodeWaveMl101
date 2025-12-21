@@ -197,7 +197,7 @@ class ExperimentTracker:
         score = f1_score(self.trainer.y_test, y_pred)
         return score
     
-    def optimize_model(self, model_type, n_trials=20, timeout=300):
+    def optimize_model(self, model_type, n_trials=20, timeout = 600):
         """
         Optimize hyperparameters using Optuna for a specific model
         
@@ -418,11 +418,11 @@ def main():
     
     tracker = ExperimentTracker(
         data_path=data_path,
-        experiment_name='Customer_Churn_HPO_Experiment'
+        experiment_name='Customer_Churn_HPO_Experiment_2'
     )
     
     # Run all experiments
-    tracker.run_all_experiments(n_trials=20)
+    tracker.run_all_experiments(n_trials=10)
     
     print(f"\n{'='*70}")
     print(f"EXPERIMENTS COMPLETED!")

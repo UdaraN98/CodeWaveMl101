@@ -1,0 +1,6 @@
+{
+  "commit_hash": "5a2105a841f965088c46dc3497bf6634f56c35c4",
+  "branch_name": "week-3-feature-engineering-and-ml-model-training",
+  "git_status": "dirty",
+  "commit_message": "Initial Trial of optuna + mlflow"
+}

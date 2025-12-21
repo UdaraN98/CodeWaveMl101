@@ -1,0 +1,1 @@
+{"columns":["Model","Best_F1_Score"],"data":[["decision_tree",0.9999002016],["logistic_regression",0.9070374297],["knn",0.9000482435],["svm",0.7371026532]]}
