@@ -20,7 +20,7 @@ on:
 
 jobs:
   train-model:
-    runs-on: [self-hosted, local, mlops]
+    runs-on: self-hosted
 
     env:
       # Local MLflow tracking server on your PC
