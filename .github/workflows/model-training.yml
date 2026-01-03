@@ -29,8 +29,6 @@ jobs:
       MODEL_NAME: my_model
       GIT_SHA: ${{ github.sha }}
       GIT_REF: ${{ github.ref_name }}
-      # Use repository dataset directory as source
-      LOCAL_DATA_DIR: ${{ github.workspace }}/Project/Data
 
     steps:
       - name: Checkout repository
@@ -67,22 +65,22 @@ jobs:
           git config user.email "ci-bot@example.com"
           git log -1 --pretty=format:"Commit: %H%nAuthor: %an%nDate: %ai%nMessage: %s"
 
-      - name: Copy training data from host directory
+      - name: Verify data exists in repository
         working-directory: ./Project
         run: |
-          if [ -z "${LOCAL_DATA_DIR}" ]; then
-            echo "LOCAL_DATA_DIR is not set. Configure it as a GitHub secret or repo variable."
+          echo "Checking for data in repository..."
+          ls -la Data/ || echo "Data directory not found in repository"
+          
+          # Check if the specific file exists
+          if [ -f "Data/customer_churn_dataset-training-master.csv" ]; then
+            echo "✅ Training data found in repository"
+            ls -lh Data/customer_churn_dataset-training-master.csv
+          else
+            echo "❌ Training data NOT found in repository"
+            echo "Available files:"
+            find Data/ -type f 2>/dev/null || echo "No Data directory"
             exit 1
           fi
-
-          if [ ! -d "${LOCAL_DATA_DIR}" ]; then
-            echo "LOCAL_DATA_DIR does not exist: ${LOCAL_DATA_DIR}"
-            exit 1
-          fi
-
-          echo "Copying datasets from ${LOCAL_DATA_DIR} into $(pwd)/Data"
-          mkdir -p Data
-          rsync -ah --delete "${LOCAL_DATA_DIR}/" Data/
 
       - name: Run model training (logs to MLflow)
         working-directory: ./Project
