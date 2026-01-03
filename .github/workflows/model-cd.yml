@@ -1,0 +1,119 @@
+name: Model CD
+
+on:
+  repository_dispatch:
+    types: [mlflow-model-change]
+  workflow_dispatch:
+    inputs:
+      model_name:
+        description: "Model name in MLflow registry"
+        required: false
+        default: "churn_logistic_regression"
+      candidate_stage:
+        description: "Stage to pick candidate from"
+        required: false
+        default: "Staging"
+      prod_stage:
+        description: "Stage to compare against"
+        required: false
+        default: "Production"
+      metric:
+        description: "Metric to compare (higher is better)"
+        required: false
+        default: "f1"
+      promote:
+        description: "Promote candidate if better"
+        required: false
+        default: "true"
+      run_container:
+        description: "Run container after build"
+        required: false
+        default: "true"
+      image_name:
+        description: "Docker image name"
+        required: false
+        default: "churn-inference"
+      image_tag:
+        description: "Docker image tag"
+        required: false
+        default: "latest"
+      container_name:
+        description: "Container name when running"
+        required: false
+        default: "churn-inference"
+      port:
+        description: "Host port for FastAPI"
+        required: false
+        default: "8000"
+
+jobs:
+  cd:
+    runs-on: self-hosted
+    env:
+      MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+      MODEL_NAME: ${{ github.event.client_payload.model_name || inputs.model_name || 'churn_logistic_regression' }}
+      CANDIDATE_STAGE: ${{ github.event.client_payload.candidate_stage || inputs.candidate_stage || 'Staging' }}
+      PROD_STAGE: ${{ github.event.client_payload.prod_stage || inputs.prod_stage || 'Production' }}
+      COMPARE_METRIC: ${{ github.event.client_payload.metric || inputs.metric || 'f1' }}
+      PROMOTE: ${{ github.event.client_payload.promote || inputs.promote || 'true' }}
+      RUN_CONTAINER: ${{ github.event.client_payload.run_container || inputs.run_container || 'true' }}
+      IMAGE_NAME: ${{ github.event.client_payload.image_name || inputs.image_name || 'churn-inference' }}
+      IMAGE_TAG: ${{ github.event.client_payload.image_tag || inputs.image_tag || 'latest' }}
+      CONTAINER_NAME: ${{ github.event.client_payload.container_name || inputs.container_name || 'churn-inference' }}
+      PORT: ${{ github.event.client_payload.port || inputs.port || '8000' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove local virtual environments
+        run: |
+          rm -rf .venv Project/.venv
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Sync dependencies
+        working-directory: ./Project
+        run: |
+          uv sync --frozen
+
+      - name: Run CD pipeline
+        working-directory: ./Project
+        env:
+          MLFLOW_TRACKING_URI: ${{ env.MLFLOW_TRACKING_URI }}
+        run: |
+          FLAGS=""
+          if [ "${PROMOTE}" = "true" ]; then
+            FLAGS="$FLAGS --promote"
+          fi
+          if [ "${RUN_CONTAINER}" != "true" ]; then
+            FLAGS="$FLAGS --skip-run"
+          fi
+
+          uv run python Scripts/cd_promote_and_build.py \
+            --model-name "${MODEL_NAME}" \
+            --candidate-stage "${CANDIDATE_STAGE}" \
+            --prod-stage "${PROD_STAGE}" \
+            --metric "${COMPARE_METRIC}" \
+            --mlflow-uri "${MLFLOW_TRACKING_URI}" \
+            --image-name "${IMAGE_NAME}" \
+            --image-tag "${IMAGE_TAG}" \
+            --container-name "${CONTAINER_NAME}" \
+            --port ${PORT} \
+            $FLAGS
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "# Model CD Report" >> $GITHUB_STEP_SUMMARY
+          echo "**Model:** ${MODEL_NAME}" >> $GITHUB_STEP_SUMMARY
+          echo "**Candidate stage:** ${CANDIDATE_STAGE}" >> $GITHUB_STEP_SUMMARY
+          echo "**Production stage:** ${PROD_STAGE}" >> $GITHUB_STEP_SUMMARY
+          echo "**Metric:** ${COMPARE_METRIC}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${IMAGE_NAME}:${IMAGE_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "**Container:** ${CONTAINER_NAME} (port ${PORT})" >> $GITHUB_STEP_SUMMARY

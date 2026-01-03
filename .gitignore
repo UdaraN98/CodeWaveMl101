@@ -38,3 +38,10 @@ _diag/
 !Project/Scripts/*.sh
 
 
+#mlartifacts
+mlartifacts/
+
+# CD build artifacts
+Project/inference_app/model/
+Project/cd_artifacts/
+
