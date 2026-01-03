@@ -10,6 +10,7 @@ __pycache__/
 # Data files - csvs
 *.csv
 
+
 # DS_Store files
 .DS_Store
 # python versioning

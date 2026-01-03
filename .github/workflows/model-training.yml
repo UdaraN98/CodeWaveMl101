@@ -29,6 +29,7 @@ jobs:
       MODEL_NAME: my_model
       GIT_SHA: ${{ github.sha }}
       GIT_REF: ${{ github.ref_name }}
+      LOCAL_DATA_DIR: ${{ secrets.LOCAL_DATA_DIR }}
 
     steps:
       - name: Checkout repository
@@ -64,6 +65,23 @@ jobs:
           git config user.name "CI Bot"
           git config user.email "ci-bot@example.com"
           git log -1 --pretty=format:"Commit: %H%nAuthor: %an%nDate: %ai%nMessage: %s"
+
+      - name: Copy training data from host directory
+        working-directory: ./Project
+        run: |
+          if [ -z "${LOCAL_DATA_DIR}" ]; then
+            echo "LOCAL_DATA_DIR is not set. Configure it as a GitHub secret or repo variable."
+            exit 1
+          fi
+
+          if [ ! -d "${LOCAL_DATA_DIR}" ]; then
+            echo "LOCAL_DATA_DIR does not exist: ${LOCAL_DATA_DIR}"
+            exit 1
+          fi
+
+          echo "Copying datasets from ${LOCAL_DATA_DIR} into $(pwd)/Data"
+          mkdir -p Data
+          rsync -ah --delete "${LOCAL_DATA_DIR}/" Data/
 
       - name: Run model training (logs to MLflow)
         working-directory: ./Project
