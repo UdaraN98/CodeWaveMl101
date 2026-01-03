@@ -674,9 +674,17 @@ def main():
 
     # Initialize trainer with MLflow
     data_path = os.path.join(data_dir, 'customer_churn_dataset_prepared.csv')
+    
+    # Get MLflow tracking URI from environment or use local
+    mlflow_uri = os.getenv('MLFLOW_TRACKING_URI', None)
+    if mlflow_uri:
+        print(f"Using remote MLflow tracking server: {mlflow_uri}")
+    else:
+        print("Using local MLflow tracking")
+    
     trainer = ModelTrainer(
         data_path,
-        mlflow_tracking_uri=None,  # Uses default local tracking
+        mlflow_tracking_uri=mlflow_uri,
         experiment_name='customer_churn_optimization'
     )
     

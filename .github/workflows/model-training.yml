@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - master
       - week-5-test-mlops-pipeline
     paths:
       - 'Project/**'
@@ -15,79 +14,84 @@ on:
       - master
     paths:
       - 'Project/**'
-  workflow_dispatch:  # Allow manual triggering
+  workflow_dispatch:
 
 jobs:
   train-model:
-    runs-on: ubuntu-latest
-    
+    # IMPORTANT:
+    # 1) Install GitHub self-hosted runner on EC2
+    # 2) Add label "ec2-mlops" to that runner
+    runs-on: self-hosted
+
+    env:
+      # Point to your EC2-hosted MLflow server (RDS backend + S3 artifact store)
+      # Put this in GitHub Secrets to avoid hardcoding:
+      # MLFLOW_TRACKING_URI = http://<EC2_PUBLIC_IP>:5000
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_EXPERIMENT_NAME: "model-training-ci"
+      # Optional: if your code supports it
+      MODEL_NAME: "my_model"
+
+      # Optional: helps MLflow show who triggered the run
+      GIT_SHA: ${{ github.sha }}
+      GIT_REF: ${{ github.ref_name }}
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # Fetch all history for git info
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.13'
-        cache: 'pip'
-    
-    - name: Install uv (fast package installer)
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-    
-    - name: Install dependencies from pyproject.toml
-      working-directory: ./Project
-      run: |
-        uv pip install --system --no-cache ipykernel>=7.1.0 kagglehub>=0.3.13 matplotlib>=3.10.7 mlflow>=3.8.0 optuna>=4.6.0 pandas>=2.3.3 scikit-learn>=1.8.0 seaborn>=0.13.2
-    
-    - name: Verify git configuration
-      run: |
-        git config --global user.name "CI Bot"
-        git config --global user.email "ci-bot@example.com"
-        git log -1 --pretty=format:"Commit: %H%nAuthor: %an%nDate: %ai%nMessage: %s"
-    
-    - name: Download training data if needed
-      working-directory: ./Project
-      run: |
-        python3 ../.github/scripts/download_data.py
-    
-    - name: Run model training
-      working-directory: ./Project
-      run: |
-        python3 Scripts/model_training.py
-      env:
-        MLFLOW_TRACKING_URI: sqlite:///mlflow.db
-    
-    - name: Upload MLflow artifacts
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: mlflow-results
-        path: |
-          Project/mlruns/
-          Project/mlflow.db
-        retention-days: 30
-    
-    - name: Upload model registry
-      uses: actions/upload-artifact@v4
-      if: success()
-      with:
-        name: model-registry
-        path: Project/Scripts/model_registry/
-        retention-days: 90
-    
-    - name: Generate training report
-      if: always()
-      run: |
-        cd Project
-        echo "# Model Training Report" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## Status" >> $GITHUB_STEP_SUMMARY
-        echo "Training completed successfully ✅" >> $GITHUB_STEP_SUMMARY
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Use system python or setup-python (setup-python works on self-hosted if configured)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install uv (fast package installer)
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        working-directory: ./Project
+        run: |
+          # Use uv for faster installation
+          uv pip install --system --no-cache \
+            "ipykernel>=7.1.0" "kagglehub>=0.3.13" "matplotlib>=3.10.7" \
+            "mlflow>=3.8.0" "optuna>=4.6.0" "pandas>=2.3.3" \
+            "scikit-learn>=1.8.0" "seaborn>=0.13.2"
+
+      - name: Verify git configuration
+        run: |
+          # Use local config to avoid messing up global user config on self-hosted runner
+          git config user.name "CI Bot"
+          git config user.email "ci-bot@example.com"
+          git log -1 --pretty=format:"Commit: %H%nAuthor: %an%nDate: %ai%nMessage: %s"
+
+      - name: Download training data if needed
+        working-directory: ./Project
+        run: |
+          python3 ../.github/scripts/download_data.py
+
+      - name: Run model training
+        working-directory: ./Project
+        run: |
+          python3 Scripts/model_training.py
+        env:
+          # Fallback to local sqlite if secret is not set
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI || 'sqlite:///mlflow.db' }}
+
+      - name: Generate training report
+        if: always()
+        run: |
+          echo "# Model Training Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "MLflow Tracking URI: ${{ secrets.MLFLOW_TRACKING_URI }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Training finished. Check MLflow UI for metrics, artifacts, and registry." >> $GITHUB_STEP_SUMMARY
