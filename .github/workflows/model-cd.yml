@@ -111,6 +111,7 @@ jobs:
         if: always()
         run: |
           echo "# Model CD Report" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.event.client_payload.triggered_by || 'manual' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Model:** ${MODEL_NAME}" >> $GITHUB_STEP_SUMMARY
           echo "**Candidate stage:** ${CANDIDATE_STAGE}" >> $GITHUB_STEP_SUMMARY
           echo "**Production stage:** ${PROD_STAGE}" >> $GITHUB_STEP_SUMMARY
