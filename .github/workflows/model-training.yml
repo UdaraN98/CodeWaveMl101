@@ -29,7 +29,8 @@ jobs:
       MODEL_NAME: my_model
       GIT_SHA: ${{ github.sha }}
       GIT_REF: ${{ github.ref_name }}
-      LOCAL_DATA_DIR: ${{ secrets.LOCAL_DATA_DIR }}
+      # Update this path to point at your local dataset directory
+      LOCAL_DATA_DIR: /Users/udaranilupul/Documents/Freelancing/CodeWave/local_datasets/customer_churn
 
     steps:
       - name: Checkout repository
