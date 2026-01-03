@@ -1,0 +1,88 @@
+name: Model Training CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - week-5-test-mlops-pipeline
+    paths:
+      - 'Project/**'
+      - '.github/workflows/model-training.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'Project/**'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  train-model:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for git info
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+        cache: 'pip'
+    
+    - name: Install uv (fast package installer)
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies from pyproject.toml
+      working-directory: ./Project
+      run: |
+        uv pip install --system --no-cache ipykernel>=7.1.0 kagglehub>=0.3.13 matplotlib>=3.10.7 mlflow>=3.8.0 optuna>=4.6.0 pandas>=2.3.3 scikit-learn>=1.8.0 seaborn>=0.13.2
+    
+    - name: Verify git configuration
+      run: |
+        git config --global user.name "CI Bot"
+        git config --global user.email "ci-bot@example.com"
+        git log -1 --pretty=format:"Commit: %H%nAuthor: %an%nDate: %ai%nMessage: %s"
+    
+    - name: Run model training
+      working-directory: ./Project
+      run: |
+        python3 Scripts/model_training.py
+      env:
+        MLFLOW_TRACKING_URI: sqlite:///mlflow.db
+    
+    - name: Upload MLflow artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: mlflow-results
+        path: |
+          Project/mlruns/
+          Project/mlflow.db
+        retention-days: 30
+    
+    - name: Upload model registry
+      uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: model-registry
+        path: Project/Scripts/model_registry/
+        retention-days: 90
+    
+    - name: Generate training report
+      if: always()
+      run: |
+        cd Project
+        echo "# Model Training Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Status" >> $GITHUB_STEP_SUMMARY
+        echo "Training completed successfully ✅" >> $GITHUB_STEP_SUMMARY

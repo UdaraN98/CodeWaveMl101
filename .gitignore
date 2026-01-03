@@ -14,3 +14,11 @@ __pycache__/
 .DS_Store
 # python versioning
 .python-version
+## pkl files
+*.pkl
+## joblib files
+*.joblib    
+# mlflow artifacts
+mlruns/
+#mlflow db/
+mlflow.db
