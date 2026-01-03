@@ -36,6 +36,11 @@ jobs:
       GIT_SHA: ${{ github.sha }}
       GIT_REF: ${{ github.ref_name }}
 
+      # Fix for self-hosted runner permission issue with setup-python
+      # Redirects tool cache to a writable location within the workspace
+      RUNNER_TOOL_CACHE: ${{ github.workspace }}/.tool_cache
+      AGENT_TOOLSDIRECTORY: ${{ github.workspace }}/.tool_cache
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
