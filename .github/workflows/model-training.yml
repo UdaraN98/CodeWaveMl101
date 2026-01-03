@@ -49,43 +49,10 @@ jobs:
         git config --global user.email "ci-bot@example.com"
         git log -1 --pretty=format:"Commit: %H%nAuthor: %an%nDate: %ai%nMessage: %s"
     
-    - name: Check data availability
+    - name: Download training data if needed
       working-directory: ./Project
       run: |
-        mkdir -p Data
-        if [ -f "Data/customer_churn_dataset-training-master.csv" ]; then
-          echo "✓ Training data found"
-          ls -lh Data/
-        else
-          echo "⚠ Training data not found, checking if we can download from kagglehub..."
-          python3 -c "
-import kagglehub
-import shutil
-import os
-
-try:
-    # Download dataset from kagglehub
-    print('Downloading dataset from Kaggle...')
-    path = kagglehub.dataset_download('muhammadshahidazeem/customer-churn-dataset')
-    print(f'Dataset downloaded to: {path}')
-    
-    # Find and copy the training file
-    import glob
-    training_files = glob.glob(os.path.join(path, '*training*.csv'))
-    if training_files:
-        src = training_files[0]
-        dst = 'Data/customer_churn_dataset-training-master.csv'
-        shutil.copy(src, dst)
-        print(f'✓ Copied training data to {dst}')
-    else:
-        print('❌ No training file found in downloaded dataset')
-        exit(1)
-except Exception as e:
-    print(f'❌ Failed to download dataset: {e}')
-    print('Please add Data/customer_churn_dataset-training-master.csv to your repository')
-    exit(1)
-"
-        fi
+        python3 ../.github/scripts/download_data.py
     
     - name: Run model training
       working-directory: ./Project
