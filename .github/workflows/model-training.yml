@@ -113,15 +113,11 @@ jobs:
         if: success()
         env:
           GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}
         run: |
           set -e
-
           payload='{"event_type":"mlflow-model-change","client_payload":{"triggered_by":"ci_pipeline","model_name":"churn_logistic_regression","candidate_stage":"Staging","prod_stage":"Production","metric":"f1","promote":"true","run_container":"true"}}'
 
-          echo "Dispatch payload: $payload"
-
-          # Capture HTTP status + response
           http_code=$(curl -sS -o response.json -w "%{http_code}" \
             -X POST \
             -H "Accept: application/vnd.github+json" \
@@ -131,12 +127,6 @@ jobs:
             -d "$payload")
 
           echo "HTTP status: $http_code"
-          echo "Response:"
           cat response.json || true
+          test "$http_code" -ge 200 -a "$http_code" -lt 300
 
-          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-            echo "❌ repository_dispatch failed"
-            exit 1
-          fi
-
-          echo "✅ repository_dispatch sent"
