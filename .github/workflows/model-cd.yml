@@ -1,8 +1,10 @@
 name: Model CD
 
 on:
-  repository_dispatch:
-    types: [mlflow-model-change]
+  workflow_run:
+    workflows: ["Model Training CI"]
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       model_name:
@@ -48,7 +50,8 @@ on:
 
 jobs:
   cd:
-    runs-on: self-hosted
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, local, mlops]
     env:
       MLFLOW_TRACKING_URI: http://127.0.0.1:5000
       MODEL_NAME: ${{ github.event.client_payload.model_name || inputs.model_name || 'churn_logistic_regression' }}
