@@ -29,6 +29,8 @@ jobs:
       MODEL_NAME: my_model
       GIT_SHA: ${{ github.sha }}
       GIT_REF: ${{ github.ref_name }}
+      # Absolute path to your data on the Mac
+      LOCAL_DATA_SOURCE: /Users/udaranilupul/Documents/Freelancing/CodeWave/CodeWaveMl101/Project/Data
 
     steps:
       - name: Checkout repository
@@ -65,22 +67,31 @@ jobs:
           git config user.email "ci-bot@example.com"
           git log -1 --pretty=format:"Commit: %H%nAuthor: %an%nDate: %ai%nMessage: %s"
 
-      - name: Verify data exists in repository
+      - name: Copy training data from local source
         working-directory: ./Project
         run: |
-          echo "Checking for data in repository..."
-          ls -la Data/ || echo "Data directory not found in repository"
-          
-          # Check if the specific file exists
-          if [ -f "Data/customer_churn_dataset-training-master.csv" ]; then
-            echo "✅ Training data found in repository"
-            ls -lh Data/customer_churn_dataset-training-master.csv
-          else
-            echo "❌ Training data NOT found in repository"
-            echo "Available files:"
-            find Data/ -type f 2>/dev/null || echo "No Data directory"
+          if [ -z "${LOCAL_DATA_SOURCE}" ]; then
+            echo "❌ LOCAL_DATA_SOURCE environment variable is not set"
             exit 1
           fi
+
+          if [ ! -d "${LOCAL_DATA_SOURCE}" ]; then
+            echo "❌ Data source directory does not exist: ${LOCAL_DATA_SOURCE}"
+            exit 1
+          fi
+
+          echo "📁 Copying data from: ${LOCAL_DATA_SOURCE}"
+          echo "📁 Copying data to: $(pwd)/Data"
+          
+          # Create Data directory if it doesn't exist
+          mkdir -p Data
+          
+          # Copy all CSV files
+          cp -v "${LOCAL_DATA_SOURCE}/"*.csv Data/
+          
+          echo ""
+          echo "✅ Data copied successfully:"
+          ls -lh Data/
 
       - name: Run model training (logs to MLflow)
         working-directory: ./Project
