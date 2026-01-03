@@ -8,70 +8,72 @@ on:
     paths:
       - 'Project/**'
       - '.github/workflows/model-training.yml'
+
   pull_request:
     branches:
       - main
       - master
     paths:
       - 'Project/**'
+
   workflow_dispatch:
 
 jobs:
   train-model:
-    # Use explicit labels — DO NOT use bare self-hosted
-    runs-on: self-hosted
+    runs-on: [self-hosted, local, mlops]
 
     env:
-      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
-      MLFLOW_EXPERIMENT_NAME: "model-training-ci"
-      MODEL_NAME: "my_model"
+      # Local MLflow tracking server on your PC
+      MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+      MLFLOW_EXPERIMENT_NAME: model-training-ci
+      MODEL_NAME: my_model
       GIT_SHA: ${{ github.sha }}
       GIT_REF: ${{ github.ref_name }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # DO NOT use setup-python on self-hosted macOS
-      - name: Verify Python (system)
+      - name: Remove local virtual environments
+        run: |
+          rm -rf .venv Project/.venv
+
+      - name: Verify system Python
         run: |
           python3 --version
           which python3
 
-      - name: Upgrade pip
+      - name: Install uv
         run: |
-          python3 -m pip install --upgrade pip
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Install dependencies
+      - name: Verify uv
+        run: |
+          uv --version
+
+      - name: Sync dependencies (pyproject.toml + uv.lock)
         working-directory: ./Project
         run: |
-          python3 -m pip install \
-            "ipykernel>=7.1.0" \
-            "kagglehub>=0.3.13" \
-            "matplotlib>=3.10.7" \
-            "mlflow>=3.8.0" \
-            "optuna>=4.6.0" \
-            "pandas>=2.3.3" \
-            "scikit-learn>=1.8.0" \
-            "seaborn>=0.13.2"
+          uv sync --frozen
 
-      - name: Verify git configuration
+      - name: Verify git info
         run: |
           git config user.name "CI Bot"
           git config user.email "ci-bot@example.com"
           git log -1 --pretty=format:"Commit: %H%nAuthor: %an%nDate: %ai%nMessage: %s"
 
-      - name: Download training data if needed
+      - name: Download training data
         working-directory: ./Project
         run: |
-          python3 ../.github/scripts/download_data.py
+          uv run python ../.github/scripts/download_data.py
 
-      - name: Run model training (logs to MLflow + S3)
+      - name: Run model training (logs to MLflow)
         working-directory: ./Project
         run: |
-          python3 Scripts/model_training.py
+          uv run python Scripts/model_training.py
 
       - name: Training summary
         if: always()
@@ -80,7 +82,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Runner:** self-hosted (mlops)" >> $GITHUB_STEP_SUMMARY
+          echo "**Runner:** self-hosted (local)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ Training completed. Check MLflow UI for metrics & registry." >> $GITHUB_STEP_SUMMARY
-
