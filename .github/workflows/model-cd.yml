@@ -5,48 +5,6 @@ on:
     workflows: ["Model Training CI"]
     types:
       - completed
-  workflow_dispatch:
-    inputs:
-      model_name:
-        description: "Model name in MLflow registry"
-        required: false
-        default: "churn_logistic_regression"
-      candidate_stage:
-        description: "Stage to pick candidate from"
-        required: false
-        default: "Staging"
-      prod_stage:
-        description: "Stage to compare against"
-        required: false
-        default: "Production"
-      metric:
-        description: "Metric to compare (higher is better)"
-        required: false
-        default: "f1"
-      promote:
-        description: "Promote candidate if better"
-        required: false
-        default: "true"
-      run_container:
-        description: "Run container after build"
-        required: false
-        default: "true"
-      image_name:
-        description: "Docker image name"
-        required: false
-        default: "churn-inference"
-      image_tag:
-        description: "Docker image tag"
-        required: false
-        default: "latest"
-      container_name:
-        description: "Container name when running"
-        required: false
-        default: "churn-inference"
-      port:
-        description: "Host port for FastAPI"
-        required: false
-        default: "8000"
 
 jobs:
   cd:
