@@ -685,7 +685,7 @@ def main():
     trainer = ModelTrainer(
         data_path,
         mlflow_tracking_uri=mlflow_uri,
-        experiment_name='customer_churn_optimization'
+        experiment_name='customer_churn_optimization_ci'
     )
     
     # Load and prepare data
