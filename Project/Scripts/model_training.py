@@ -655,17 +655,25 @@ class ModelTrainer:
 
 def main():
     """Main execution function demonstrating enhanced ModelTrainer"""
+    # Get the project root directory dynamically
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(script_dir)
+    data_dir = os.path.join(project_dir, 'Data')
+    
+    # Ensure data directory exists
+    os.makedirs(data_dir, exist_ok=True)
+    
     # run the data preprocessing script
     preprocessor = DataPreprocessor(
-        input_dir='/Users/udaranilupul/Documents/Freelancing/CodeWave/CodeWaveMl101/Project/Data',
-        output_dir='/Users/udaranilupul/Documents/Freelancing/CodeWave/CodeWaveMl101/Project/Data'
+        input_dir=data_dir,
+        output_dir=data_dir
     )
     preprocessor.load_data()
     preprocessor.apply_preprocessing()
     preprocessor.save_data()    
 
     # Initialize trainer with MLflow
-    data_path = '/Users/udaranilupul/Documents/Freelancing/CodeWave/CodeWaveMl101/Project/Data/customer_churn_dataset_prepared.csv'
+    data_path = os.path.join(data_dir, 'customer_churn_dataset_prepared.csv')
     trainer = ModelTrainer(
         data_path,
         mlflow_tracking_uri=None,  # Uses default local tracking
