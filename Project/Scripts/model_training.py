@@ -19,6 +19,7 @@ import subprocess
 import os
 import shutil
 import time
+import pickle
 from typing import Dict, Any, Callable, Optional
 from dataclasses import dataclass
 from datetime import datetime
@@ -70,15 +71,26 @@ class ModelTrainer:
         self.y_test = None
         self.models = {}
         self.model_classes = {}
-        self.trained_models_metrics = {}  # Track all trained models for comparison
+        self.trained_models_metrics = {}
+        self.model_run_ids = {}  # Track run IDs for each model
         
         # MLflow setup
-        self.mlflow_tracking_uri = mlflow_tracking_uri
+        self.mlflow_tracking_uri = mlflow_tracking_uri or "./mlruns"
         self.experiment_name = experiment_name or "default_experiment"
-        if mlflow_tracking_uri:
-            mlflow.set_tracking_uri(mlflow_tracking_uri)
-        mlflow.set_experiment(self.experiment_name)
-        self.mlflow_client = MlflowClient()
+        mlflow.set_tracking_uri(self.mlflow_tracking_uri)
+        
+        # Create or get experiment
+        try:
+            experiment = mlflow.get_experiment_by_name(self.experiment_name)
+            if experiment is None:
+                experiment_id = mlflow.create_experiment(self.experiment_name)
+            else:
+                experiment_id = experiment.experiment_id
+            mlflow.set_experiment(self.experiment_name)
+        except Exception as e:
+            print(f"Warning: Could not set experiment: {e}")
+        
+        self.mlflow_client = MlflowClient(tracking_uri=self.mlflow_tracking_uri)
         
         # Production artifacts directory
         self.prod_artifacts_dir = os.path.join('mlruns', 'production_models')
@@ -161,148 +173,182 @@ class ModelTrainer:
         return ModelMetrics(accuracy, precision, recall, f1, auc)
     
     def _log_metrics_to_mlflow(self, metrics: ModelMetrics):
-        """Log metrics to MLflow (called once per run)"""
+        """Log metrics to MLflow"""
         for metric_name, metric_value in metrics.to_dict().items():
             mlflow.log_metric(metric_name, metric_value)
     
-    def _copy_artifacts_to_production_folder(self, registry_name: str, version: str):
-        """Copy model artifacts to production folder for easy API access"""
+    def _save_production_model(self, model, model_name: str, registry_name: str, 
+                               version: str, metrics: ModelMetrics):
+        """Save production model directly to file system for API access"""
         try:
-            # Get the run_id for this model version
-            model_version = self.mlflow_client.get_model_version(registry_name, version)
-            run_id = model_version.run_id
+            # Create production model directory
+            prod_model_dir = os.path.join(self.prod_artifacts_dir, f'{registry_name}_v{version}')
+            os.makedirs(prod_model_dir, exist_ok=True)
             
-            # Source: MLflow artifacts location
-            run = self.mlflow_client.get_run(run_id)
-            artifact_uri = run.info.artifact_uri
+            # Save model using pickle
+            model_path = os.path.join(prod_model_dir, 'model.pkl')
+            with open(model_path, 'wb') as f:
+                pickle.dump(model, f)
             
-            # Convert artifact URI to local path
-            if artifact_uri.startswith('file://'):
-                source_path = artifact_uri.replace('file://', '')
-            elif artifact_uri.startswith('./') or artifact_uri.startswith('mlruns/'):
-                source_path = artifact_uri
-            else:
-                source_path = artifact_uri
+            # Save metadata
+            metadata = {
+                'model_name': model_name,
+                'registry_name': registry_name,
+                'version': version,
+                'promoted_at': datetime.now().isoformat(),
+                'model_path': model_path,
+                'metrics': metrics.to_dict()
+            }
             
-            # Destination: production_models folder
-            dest_path = os.path.join(self.prod_artifacts_dir, f'{registry_name}_v{version}')
-            
-            # Remove existing destination if it exists
-            if os.path.exists(dest_path):
-                shutil.rmtree(dest_path)
-            
-            # Copy artifacts
-            if os.path.exists(source_path):
-                shutil.copytree(source_path, dest_path)
-                
-                # Create a metadata file for easy reference
-                metadata = {
-                    'model_name': registry_name,
-                    'version': version,
-                    'run_id': run_id,
-                    'promoted_at': datetime.now().isoformat(),
-                    'model_path': os.path.join(dest_path, model_version.source.split('/')[-1])
-                }
-                
-                metadata_path = os.path.join(dest_path, 'production_metadata.txt')
-                with open(metadata_path, 'w') as f:
-                    for key, value in metadata.items():
+            metadata_path = os.path.join(prod_model_dir, 'production_metadata.txt')
+            with open(metadata_path, 'w') as f:
+                f.write(f"Production Model Metadata\n")
+                f.write(f"{'='*50}\n")
+                for key, value in metadata.items():
+                    if key == 'metrics':
+                        f.write(f"\nMetrics:\n")
+                        for metric_name, metric_value in value.items():
+                            f.write(f"  {metric_name}: {metric_value:.4f}\n")
+                    else:
                         f.write(f"{key}: {value}\n")
                 
-                print(f"  ✓ Artifacts copied to: {dest_path}")
-                print(f"  → Model ready for API at: {dest_path}")
-                return dest_path
-            else:
-                print(f"  ✗ Warning: Source artifacts not found at {source_path}")
-                return None
-                
+                if self.git_info:
+                    f.write(f"\nGit Information:\n")
+                    f.write(f"  commit: {self.git_info.commit_hash}\n")
+                    f.write(f"  branch: {self.git_info.branch}\n")
+                    f.write(f"  author: {self.git_info.author}\n")
+            
+            # Save a simple load script
+            load_script = f"""# Load Production Model
+import pickle
+
+# Load the model
+with open('model.pkl', 'rb') as f:
+    model = pickle.load(f)
+
+# Use the model
+# predictions = model.predict(X_new)
+"""
+            
+            with open(os.path.join(prod_model_dir, 'load_model.py'), 'w') as f:
+                f.write(load_script)
+            
+            print(f"  ✓ Production model saved to: {prod_model_dir}")
+            print(f"  → Model ready for API at: {model_path}")
+            
+            return prod_model_dir
+            
         except Exception as e:
-            print(f"  ✗ Error copying artifacts: {e}")
+            print(f"  ✗ Error saving production model: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def register_model_to_registry(self, model, model_name: str, registry_name: str,
-                                   metrics: ModelMetrics, model_description: str = None,
+                                   metrics: ModelMetrics, run_id: str = None,
+                                   model_description: str = None,
                                    stage: str = 'Staging') -> str:
-        """Register a model to MLflow Model Registry with minimal tags"""
-        # Infer signature
-        signature = infer_signature(self.X_train, model.predict(self.X_train))
-        
-        # Log model
-        model_info = mlflow.sklearn.log_model(
-            model, 
-            artifact_path=model_name,
-            signature=signature,
-            registered_model_name=registry_name
-        )
-        
-        # Wait for registration
-        time.sleep(1)
-        
+        """Register a model to MLflow Model Registry"""
         try:
-            versions = self.mlflow_client.search_model_versions(f"name='{registry_name}'")
-            if not versions:
-                print(f"Warning: No versions found for model '{registry_name}'")
-                return None
-            model_version = max([int(v.version) for v in versions])
-        except Exception as e:
-            print(f"Error getting model version: {e}")
-            return None
-        
-        # Set essential tags only
-        tags = {
-            'registered_at': datetime.now().isoformat(),
-            'f1_score': str(round(metrics.f1, 4)),
-            'accuracy': str(round(metrics.accuracy, 4)),
-            'auc': str(round(metrics.auc, 4))
-        }
-        
-        if self.git_info:
-            tags['git_commit'] = self.git_info.commit_hash[:8]
-            tags['git_author'] = self.git_info.author
-        
-        # Set tags with retry
-        max_retries = 3
-        for attempt in range(max_retries):
+            # If we have a run_id, use it to register the model
+            if run_id:
+                # Get the artifact URI from the run
+                run = self.mlflow_client.get_run(run_id)
+                model_uri = f"runs:/{run_id}/{model_name}"
+            else:
+                # Log the model in the current run
+                signature = infer_signature(self.X_train, model.predict(self.X_train))
+                model_info = mlflow.sklearn.log_model(
+                    model, 
+                    artifact_path=model_name,
+                    signature=signature
+                )
+                model_uri = model_info.model_uri
+                run_id = mlflow.active_run().info.run_id
+            
+            # Register the model
             try:
-                for tag_key, tag_value in tags.items():
-                    self.mlflow_client.set_model_version_tag(
+                registered_model = mlflow.register_model(model_uri, registry_name)
+                model_version = registered_model.version
+                print(f"✓ Model registered: {registry_name} version {model_version}")
+            except Exception as reg_error:
+                print(f"Registration error: {reg_error}")
+                # Try to get the latest version
+                try:
+                    versions = self.mlflow_client.search_model_versions(f"name='{registry_name}'")
+                    if versions:
+                        model_version = max([int(v.version) for v in versions])
+                    else:
+                        print(f"Could not determine version for {registry_name}")
+                        return None
+                except Exception as e:
+                    print(f"Error getting model version: {e}")
+                    return None
+            
+            # Wait a bit for the registry to update
+            time.sleep(2)
+            
+            # Set tags
+            tags = {
+                'registered_at': datetime.now().isoformat(),
+                'f1_score': str(round(metrics.f1, 4)),
+                'accuracy': str(round(metrics.accuracy, 4)),
+                'auc': str(round(metrics.auc, 4)),
+                'run_id': run_id
+            }
+            
+            if self.git_info:
+                tags['git_commit'] = self.git_info.commit_hash[:8]
+                tags['git_author'] = self.git_info.author
+            
+            # Set tags with retry
+            for attempt in range(3):
+                try:
+                    for tag_key, tag_value in tags.items():
+                        self.mlflow_client.set_model_version_tag(
+                            name=registry_name,
+                            version=str(model_version),
+                            key=tag_key,
+                            value=str(tag_value)
+                        )
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        time.sleep(1)
+                    else:
+                        print(f"Warning: Could not set all tags: {e}")
+            
+            # Set description
+            if model_description:
+                try:
+                    self.mlflow_client.update_model_version(
                         name=registry_name,
                         version=str(model_version),
-                        key=tag_key,
-                        value=str(tag_value)
+                        description=model_description
                     )
-                break
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-                else:
-                    print(f"Warning: Could not set tags: {e}")
-        
-        # Set description
-        if model_description:
+                except Exception as e:
+                    print(f"Warning: Could not set description: {e}")
+            
+            # Set stage
             try:
-                self.mlflow_client.update_model_version(
+                self.mlflow_client.transition_model_version_stage(
                     name=registry_name,
                     version=str(model_version),
-                    description=model_description
+                    stage=stage
                 )
+                print(f"✓ Model stage set to: {stage}")
             except Exception as e:
-                print(f"Warning: Could not set description: {e}")
-        
-        # Set stage
-        try:
-            self.mlflow_client.transition_model_version_stage(
-                name=registry_name,
-                version=str(model_version),
-                stage=stage
-            )
+                print(f"Warning: Could not set stage: {e}")
+            
+            print(f"  F1: {metrics.f1:.4f} | Accuracy: {metrics.accuracy:.4f} | AUC: {metrics.auc:.4f}")
+            
+            return str(model_version)
+            
         except Exception as e:
-            print(f"Warning: Could not set stage: {e}")
-        
-        print(f"✓ Model '{registry_name}' v{model_version} registered ({stage})")
-        print(f"  F1: {metrics.f1:.4f} | Accuracy: {metrics.accuracy:.4f} | AUC: {metrics.auc:.4f}")
-        
-        return str(model_version)
+            print(f"Error in register_model_to_registry: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     
     def train_model(self, model_name: str, **params):
         """Train a registered model with custom parameters"""
@@ -338,17 +384,11 @@ class ModelTrainer:
                                        n_trials: int = 10, model_name: str = 'optuna_model') -> tuple:
         """Optimize hyperparameters using Optuna"""
         def objective(trial: Trial):
-            # Suggest parameters
             params = {name: suggest_func(trial) for name, suggest_func in param_distributions.items()}
-            
-            # Train model
             model = model_class(**params)
             model.fit(self.X_train, self.y_train)
-            
-            # Calculate F1 score for optimization
             y_pred = model.predict(self.X_test)
             f1 = f1_score(self.y_test, y_pred, zero_division=0)
-            
             return f1
         
         study = optuna.create_study(direction='maximize')
@@ -404,88 +444,46 @@ class ModelTrainer:
         df = df.sort_values('f1', ascending=False).reset_index(drop=True)
         return df
     
-    def promote_best_model_across_all(self, registry_names: list, metric: str = 'f1') -> Dict[str, str]:
-        """Promote the single best model to Production, stage all others, and copy artifacts"""
-        all_models = []
+    def save_best_model_to_production(self) -> Dict[str, Any]:
+        """Find the best model and save it to production"""
+        if not self.trained_models_metrics:
+            print("No models have been trained yet!")
+            return None
         
-        # Collect all model versions
-        for registry_name in registry_names:
-            try:
-                versions = self.mlflow_client.search_model_versions(f"name='{registry_name}'")
-                for v in versions:
-                    metric_tag = f'metric_{metric}' if f'metric_{metric}' in v.tags else metric
-                    if metric_tag in v.tags:
-                        all_models.append({
-                            'registry_name': registry_name,
-                            'version': v.version,
-                            'metric_value': float(v.tags[metric_tag]),
-                            'stage': v.current_stage
-                        })
-            except Exception as e:
-                print(f"Warning: Could not retrieve versions for {registry_name}: {e}")
-        
-        if not all_models:
-            print("No models found to promote")
-            return {}
-        
-        # Find best model
-        best_model = max(all_models, key=lambda x: x['metric_value'])
+        # Find best model by F1 score
+        best_model_name = max(self.trained_models_metrics.items(), 
+                             key=lambda x: x[1].f1)[0]
+        best_metrics = self.trained_models_metrics[best_model_name]
+        best_model = self.models[best_model_name]
         
         print(f"\n{'='*60}")
-        print("Model Promotion Summary")
+        print("SAVING BEST MODEL TO PRODUCTION")
         print(f"{'='*60}")
-        
-        results = {}
-        
-        # Process each model
-        for model in all_models:
-            registry_name = model['registry_name']
-            version = model['version']
-            
-            if (model['registry_name'] == best_model['registry_name'] and 
-                model['version'] == best_model['version']):
-                # Promote best to Production
-                try:
-                    # Archive current production models
-                    current_prod = [v for v in self.mlflow_client.search_model_versions(f"name='{registry_name}'")
-                                  if v.current_stage == 'Production']
-                    for v in current_prod:
-                        if str(v.version) != str(version):
-                            self.mlflow_client.transition_model_version_stage(
-                                name=registry_name,
-                                version=str(v.version),
-                                stage='Archived'
-                            )
-                    
-                    self.mlflow_client.transition_model_version_stage(
-                        name=registry_name,
-                        version=str(version),
-                        stage='Production'
-                    )
-                    results[f"{registry_name}_v{version}"] = 'Production'
-                    print(f"✓ PRODUCTION: {registry_name} v{version} ({metric}={model['metric_value']:.4f}) ⭐")
-                    
-                    # Copy artifacts to production folder
-                    self._copy_artifacts_to_production_folder(registry_name, version)
-                    
-                except Exception as e:
-                    print(f"✗ Error promoting {registry_name} v{version}: {e}")
-            else:
-                # Stage all others
-                if model['stage'] == 'Production':
-                    try:
-                        self.mlflow_client.transition_model_version_stage(
-                            name=registry_name,
-                            version=str(version),
-                            stage='Staging'
-                        )
-                        results[f"{registry_name}_v{version}"] = 'Staging'
-                        print(f"  Staging:    {registry_name} v{version} ({metric}={model['metric_value']:.4f})")
-                    except Exception as e:
-                        print(f"✗ Error staging {registry_name} v{version}: {e}")
-        
+        print(f"Best Model: {best_model_name}")
+        print(f"F1 Score: {best_metrics.f1:.4f}")
+        print(f"Accuracy: {best_metrics.accuracy:.4f}")
+        print(f"AUC: {best_metrics.auc:.4f}")
         print(f"{'='*60}\n")
-        return results
+        
+        # Save to production folder
+        registry_name = f"churn_predictor_{best_model_name}"
+        version = "1"  # You can increment this if needed
+        
+        prod_dir = self._save_production_model(
+            model=best_model,
+            model_name=best_model_name,
+            registry_name=registry_name,
+            version=version,
+            metrics=best_metrics
+        )
+        
+        return {
+            'model_name': best_model_name,
+            'registry_name': registry_name,
+            'version': version,
+            'metrics': best_metrics.to_dict(),
+            'production_dir': prod_dir
+        }
 
 
 def main():
@@ -497,6 +495,9 @@ def main():
     os.makedirs(data_dir, exist_ok=True)
     
     # Preprocessing
+    print("="*60)
+    print("PREPROCESSING DATA")
+    print("="*60)
     preprocessor = DataPreprocessor(input_dir=data_dir, output_dir=data_dir)
     preprocessor.load_data()
     preprocessor.apply_preprocessing()
@@ -504,7 +505,7 @@ def main():
     
     # Initialize trainer
     data_path = os.path.join(data_dir, 'customer_churn_dataset_prepared.csv')
-    mlflow_uri = os.getenv('MLFLOW_TRACKING_URI', None)
+    mlflow_uri = os.getenv('MLFLOW_TRACKING_URI', './mlruns')
     
     trainer = ModelTrainer(
         data_path,
@@ -520,43 +521,51 @@ def main():
     trainer.register_model('logistic_regression', LogisticRegression, random_state=42, max_iter=1000)
     trainer.register_model('decision_tree', DecisionTreeClassifier, random_state=42)
     
-    registry_names = []
-    
     # ==================== Train and Optimize Models ====================
     print("\n" + "="*60)
-    print("Training Models with Optuna Optimization")
+    print("TRAINING MODELS WITH OPTUNA OPTIMIZATION")
     print("="*60)
     
     # Logistic Regression
+    print("\n[1/2] Training Logistic Regression...")
     param_dist_lr = {
         'C': lambda trial: trial.suggest_float('C', 0.001, 100.0, log=True),
         'max_iter': lambda trial: trial.suggest_int('max_iter', 100, 500),
         'solver': lambda trial: trial.suggest_categorical('solver', ['lbfgs', 'liblinear', 'newton-cg'])
     }
     
-    with mlflow.start_run(run_name='logistic_regression_optuna'):
+    with mlflow.start_run(run_name='logistic_regression_optuna') as run:
+        lr_run_id = run.info.run_id
         trainer._log_git_info()
         mlflow.log_param('n_trials', 20)
+        mlflow.log_param('model_type', 'logistic_regression')
         
         study_lr, best_lr = trainer.optuna_optimization_with_model(
             LogisticRegression, param_dist_lr, n_trials=20, model_name='lr_optuna'
         )
         
+        # Log best params
+        for param_name, param_value in study_lr.best_params.items():
+            mlflow.log_param(f'best_{param_name}', param_value)
+        
         lr_metrics = trainer.evaluate_model('lr_optuna', model=best_lr)
         trainer._log_metrics_to_mlflow(lr_metrics)
         trainer.trained_models_metrics['logistic_regression'] = lr_metrics
+        trainer.model_run_ids['logistic_regression'] = lr_run_id
         
-        trainer.register_model_to_registry(
+        # Register to MLflow
+        version = trainer.register_model_to_registry(
             model=best_lr,
             model_name='lr_optuna',
             registry_name='churn_predictor_lr',
             metrics=lr_metrics,
-            model_description=f'Optuna-optimized Logistic Regression. Params: {study_lr.best_params}',
+            run_id=lr_run_id,
+            model_description=f'Optuna-optimized Logistic Regression. Best params: {study_lr.best_params}',
             stage='Staging'
         )
-        registry_names.append('churn_predictor_lr')
     
     # Decision Tree
+    print("\n[2/2] Training Decision Tree...")
     param_dist_dt = {
         'max_depth': lambda trial: trial.suggest_int('max_depth', 2, 20),
         'min_samples_split': lambda trial: trial.suggest_int('min_samples_split', 2, 20),
@@ -564,47 +573,56 @@ def main():
         'criterion': lambda trial: trial.suggest_categorical('criterion', ['gini', 'entropy'])
     }
     
-    with mlflow.start_run(run_name='decision_tree_optuna'):
+    with mlflow.start_run(run_name='decision_tree_optuna') as run:
+        dt_run_id = run.info.run_id
         trainer._log_git_info()
         mlflow.log_param('n_trials', 20)
+        mlflow.log_param('model_type', 'decision_tree')
         
         study_dt, best_dt = trainer.optuna_optimization_with_model(
             DecisionTreeClassifier, param_dist_dt, n_trials=20, model_name='dt_optuna'
         )
         
+        # Log best params
+        for param_name, param_value in study_dt.best_params.items():
+            mlflow.log_param(f'best_{param_name}', param_value)
+        
         dt_metrics = trainer.evaluate_model('dt_optuna', model=best_dt)
         trainer._log_metrics_to_mlflow(dt_metrics)
         trainer.trained_models_metrics['decision_tree'] = dt_metrics
+        trainer.model_run_ids['decision_tree'] = dt_run_id
         
-        trainer.register_model_to_registry(
+        # Register to MLflow
+        version = trainer.register_model_to_registry(
             model=best_dt,
             model_name='dt_optuna',
             registry_name='churn_predictor_dt',
             metrics=dt_metrics,
-            model_description=f'Optuna-optimized Decision Tree. Params: {study_dt.best_params}',
+            run_id=dt_run_id,
+            model_description=f'Optuna-optimized Decision Tree. Best params: {study_dt.best_params}',
             stage='Staging'
         )
-        registry_names.append('churn_predictor_dt')
     
     # ==================== Model Comparison ====================
     print("\n" + "="*60)
-    print("Model Performance Comparison")
+    print("MODEL PERFORMANCE COMPARISON")
     print("="*60)
     
     comparison_df = trainer.compare_all_models()
     print("\n", comparison_df.to_string(index=False))
     
-    # ==================== Promote Best Model ====================
+    # ==================== Save Best Model to Production ====================
+    best_model_info = trainer.save_best_model_to_production()
+    
     print("\n" + "="*60)
-    print("Promoting Best Model to Production")
+    print("✓ TRAINING COMPLETE!")
     print("="*60)
-    
-    trainer.promote_best_model_across_all(registry_names, metric='f1')
-    
-    print("\n" + "="*60)
-    print("✓ Training Complete!")
-    print("Check MLflow UI for detailed tracking and model registry")
-    print(f"Production model artifacts available at: mlruns/production_models/")
+    print(f"Best Model: {best_model_info['model_name']}")
+    print(f"Production Directory: {best_model_info['production_dir']}")
+    print(f"\nTo use the model in your API:")
+    print(f"  import pickle")
+    print(f"  with open('{best_model_info['production_dir']}/model.pkl', 'rb') as f:")
+    print(f"      model = pickle.load(f)")
     print("="*60)
 
 
