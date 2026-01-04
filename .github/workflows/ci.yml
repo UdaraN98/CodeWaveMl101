@@ -1,0 +1,110 @@
+name: Model Training CI
+
+on:
+  push:
+    branches:
+      - main
+      - week-5-ci-cd-final
+    paths:
+      - 'Project/**'
+      - '.github/workflows/ci.yml'
+
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'Project/**'
+
+  workflow_dispatch:
+
+jobs:
+  train-model:
+    runs-on: self-hosted
+
+    env:
+      # Local MLflow tracking server on your PC
+      MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+      MLFLOW_EXPERIMENT_NAME: model-training-ci
+      MODEL_NAME: my_model
+      GIT_SHA: ${{ github.sha }}
+      GIT_REF: ${{ github.ref_name }}
+      # Absolute path to your data on the Mac
+      LOCAL_DATA_SOURCE: /Users/udaranilupul/Documents/Freelancing/CodeWave/CodeWaveMl101/Project/Data
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove local virtual environments
+        run: |
+          rm -rf .venv Project/.venv
+
+      - name: Verify system Python
+        run: |
+          python3 --version
+          which python3
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Verify uv
+        run: |
+          uv --version
+
+      - name: Sync dependencies (pyproject.toml + uv.lock)
+        working-directory: ./Project
+        run: |
+          uv sync --frozen
+
+      - name: Verify git info
+        run: |
+          git config user.name "CI Bot"
+          git config user.email "ci-bot@example.com"
+          git log -1 --pretty=format:"Commit: %H%nAuthor: %an%nDate: %ai%nMessage: %s"
+
+      - name: Copy training data from local source
+        working-directory: ./Project
+        run: |
+          if [ -z "${LOCAL_DATA_SOURCE}" ]; then
+            echo "❌ LOCAL_DATA_SOURCE environment variable is not set"
+            exit 1
+          fi
+
+          if [ ! -d "${LOCAL_DATA_SOURCE}" ]; then
+            echo "❌ Data source directory does not exist: ${LOCAL_DATA_SOURCE}"
+            exit 1
+          fi
+
+          echo "📁 Copying data from: ${LOCAL_DATA_SOURCE}"
+          echo "📁 Copying data to: $(pwd)/Data"
+          
+          # Create Data directory if it doesn't exist
+          mkdir -p Data
+          
+          # Copy all CSV files
+          cp -v "${LOCAL_DATA_SOURCE}/"*.csv Data/
+          
+          echo ""
+          echo "✅ Data copied successfully:"
+          ls -lh Data/
+
+      - name: Run model training (logs to MLflow)
+        working-directory: ./Project
+        run: |
+          uv run python Scripts/model_training.py
+
+      - name: Training summary
+        if: always()
+        run: |
+          echo "# Model Training Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Runner:** self-hosted (local)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Training completed. Check MLflow UI for metrics & registry." >> $GITHUB_STEP_SUMMARY

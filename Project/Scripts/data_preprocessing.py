@@ -6,8 +6,6 @@ from pathlib import Path
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
 from sklearn.compose import ColumnTransformer
-from sklearn.feature_selection import RFE
-from sklearn.ensemble import RandomForestClassifier
 import joblib
 
 
@@ -148,7 +146,7 @@ class DataPreprocessor:
         output_data.to_csv(filepath, index=False)
         print(f"✓ Preprocessed data saved: {filepath}")
     
-    def run_pipeline(self, visualize=True, n_rfe_features=5, save_preprocessor=True):
+    def run_pipeline(self, save_preprocessor=True):
         """Execute the complete preprocessing pipeline."""
         print("\n" + "="*60)
         print("Starting Data Preprocessing Pipeline (scikit-learn)")
@@ -168,13 +166,3 @@ class DataPreprocessor:
         print("="*60 + "\n")
         
         return self.X, self.y
-
-
-if __name__ == "__main__":
-    # Define input and output directories
-    input_directory = '/Users/udaranilupul/Documents/Freelancing/CodeWave/CodeWaveMl101/Project/Data'
-    output_directory = '/Users/udaranilupul/Documents/Freelancing/CodeWave/CodeWaveMl101/Project/Data'
-    
-    # Initialize and run preprocessor
-    preprocessor = DataPreprocessor(input_directory, output_directory)
-    X, y = preprocessor.run_pipeline(save_preprocessor=True)

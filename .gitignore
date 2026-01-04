@@ -14,3 +14,12 @@ __pycache__/
 .DS_Store
 # python versioning
 .python-version
+# all the content in the action rinner folder
+actions-runner/
+
+# pickle files
+*.pkl
+#mlartifacts
+mlartifacts/
+#mlruns
+mlruns/
