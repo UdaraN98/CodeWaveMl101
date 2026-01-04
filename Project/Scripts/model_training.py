@@ -54,7 +54,7 @@ class ModelMetrics:
 
 
 class ModelTrainer:
-    """Optimized model training and evaluation with MLflow integration"""
+    """Optimized model training and evaluation with MLflow integrations"""
     
     def __init__(self, data_path, test_size=0.2, random_state=42, 
                  mlflow_tracking_uri=None, experiment_name=None):
