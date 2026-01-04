@@ -17,6 +17,7 @@ from mlflow.tracking import MlflowClient
 from mlflow.models import infer_signature
 import subprocess
 import os
+import shutil
 import time
 from typing import Dict, Any, Callable, Optional
 from dataclasses import dataclass
@@ -78,6 +79,10 @@ class ModelTrainer:
             mlflow.set_tracking_uri(mlflow_tracking_uri)
         mlflow.set_experiment(self.experiment_name)
         self.mlflow_client = MlflowClient()
+        
+        # Production artifacts directory
+        self.prod_artifacts_dir = os.path.join('mlruns', 'production_models')
+        os.makedirs(self.prod_artifacts_dir, exist_ok=True)
         
         # Git info
         self.git_info = self._get_git_info()
@@ -159,6 +164,61 @@ class ModelTrainer:
         """Log metrics to MLflow (called once per run)"""
         for metric_name, metric_value in metrics.to_dict().items():
             mlflow.log_metric(metric_name, metric_value)
+    
+    def _copy_artifacts_to_production_folder(self, registry_name: str, version: str):
+        """Copy model artifacts to production folder for easy API access"""
+        try:
+            # Get the run_id for this model version
+            model_version = self.mlflow_client.get_model_version(registry_name, version)
+            run_id = model_version.run_id
+            
+            # Source: MLflow artifacts location
+            run = self.mlflow_client.get_run(run_id)
+            artifact_uri = run.info.artifact_uri
+            
+            # Convert artifact URI to local path
+            if artifact_uri.startswith('file://'):
+                source_path = artifact_uri.replace('file://', '')
+            elif artifact_uri.startswith('./') or artifact_uri.startswith('mlruns/'):
+                source_path = artifact_uri
+            else:
+                source_path = artifact_uri
+            
+            # Destination: production_models folder
+            dest_path = os.path.join(self.prod_artifacts_dir, f'{registry_name}_v{version}')
+            
+            # Remove existing destination if it exists
+            if os.path.exists(dest_path):
+                shutil.rmtree(dest_path)
+            
+            # Copy artifacts
+            if os.path.exists(source_path):
+                shutil.copytree(source_path, dest_path)
+                
+                # Create a metadata file for easy reference
+                metadata = {
+                    'model_name': registry_name,
+                    'version': version,
+                    'run_id': run_id,
+                    'promoted_at': datetime.now().isoformat(),
+                    'model_path': os.path.join(dest_path, model_version.source.split('/')[-1])
+                }
+                
+                metadata_path = os.path.join(dest_path, 'production_metadata.txt')
+                with open(metadata_path, 'w') as f:
+                    for key, value in metadata.items():
+                        f.write(f"{key}: {value}\n")
+                
+                print(f"  ✓ Artifacts copied to: {dest_path}")
+                print(f"  → Model ready for API at: {dest_path}")
+                return dest_path
+            else:
+                print(f"  ✗ Warning: Source artifacts not found at {source_path}")
+                return None
+                
+        except Exception as e:
+            print(f"  ✗ Error copying artifacts: {e}")
+            return None
     
     def register_model_to_registry(self, model, model_name: str, registry_name: str,
                                    metrics: ModelMetrics, model_description: str = None,
@@ -345,7 +405,7 @@ class ModelTrainer:
         return df
     
     def promote_best_model_across_all(self, registry_names: list, metric: str = 'f1') -> Dict[str, str]:
-        """Promote the single best model to Production, stage all others"""
+        """Promote the single best model to Production, stage all others, and copy artifacts"""
         all_models = []
         
         # Collect all model versions
@@ -404,6 +464,10 @@ class ModelTrainer:
                     )
                     results[f"{registry_name}_v{version}"] = 'Production'
                     print(f"✓ PRODUCTION: {registry_name} v{version} ({metric}={model['metric_value']:.4f}) ⭐")
+                    
+                    # Copy artifacts to production folder
+                    self._copy_artifacts_to_production_folder(registry_name, version)
+                    
                 except Exception as e:
                     print(f"✗ Error promoting {registry_name} v{version}: {e}")
             else:
@@ -540,6 +604,7 @@ def main():
     print("\n" + "="*60)
     print("✓ Training Complete!")
     print("Check MLflow UI for detailed tracking and model registry")
+    print(f"Production model artifacts available at: mlruns/production_models/")
     print("="*60)
 
 
