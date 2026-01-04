@@ -60,6 +60,9 @@ class ModelTrainer:
     def __init__(self, data_path, test_size=0.2, random_state=42, 
                  mlflow_tracking_uri=None, experiment_name=None):
         """Initialize ModelTrainer with dataset and MLflow configuration"""
+        # Resolve project root (..../Project) reliably, independent of CWD
+        self.project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
         self.data_path = data_path
         self.test_size = test_size
         self.random_state = random_state
@@ -81,7 +84,9 @@ class ModelTrainer:
         self.mlflow_client = MlflowClient()
         
         # Production artifacts directory
-        self.prod_artifacts_dir = os.path.join('mlruns', 'production_models')
+        self.mlruns_dir = os.path.join(self.project_dir, 'mlruns')
+        os.makedirs(self.mlruns_dir, exist_ok=True)
+        self.prod_artifacts_dir = os.path.join(self.mlruns_dir, 'production_models')
         os.makedirs(self.prod_artifacts_dir, exist_ok=True)
         
         # Git info
@@ -486,7 +491,11 @@ def main():
     
     # Initialize trainer
     data_path = os.path.join(data_dir, 'customer_churn_dataset_prepared.csv')
-    mlflow_uri = os.getenv('MLFLOW_TRACKING_URI', None)
+    # If no tracking URI is provided, pin MLflow to Project/mlruns so artifacts
+    # and the best-model export land in a consistent location.
+    mlflow_uri = os.getenv('MLFLOW_TRACKING_URI')
+    if not mlflow_uri:
+        mlflow_uri = f"file://{os.path.join(project_dir, 'mlruns')}"
     
     trainer = ModelTrainer(
         data_path,
