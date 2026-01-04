@@ -404,89 +404,71 @@ class ModelTrainer:
         df = df.sort_values('f1', ascending=False).reset_index(drop=True)
         return df
     
-    def promote_best_model_across_all(self, registry_names: list, metric: str = 'f1') -> Dict[str, str]:
-        """Promote the single best model to Production, stage all others, and copy artifacts"""
-        all_models = []
-        
-        # Collect all model versions
-        for registry_name in registry_names:
-            try:
-                versions = self.mlflow_client.search_model_versions(f"name='{registry_name}'")
-                for v in versions:
-                    metric_tag = f'metric_{metric}' if f'metric_{metric}' in v.tags else metric
-                    if metric_tag in v.tags:
-                        all_models.append({
-                            'registry_name': registry_name,
-                            'version': v.version,
-                            'metric_value': float(v.tags[metric_tag]),
-                            'stage': v.current_stage
-                        })
-            except Exception as e:
-                print(f"Warning: Could not retrieve versions for {registry_name}: {e}")
-        
-        if not all_models:
-            print("No models found to promote")
-            return {}
-        
-        # Find best model
-        best_model = max(all_models, key=lambda x: x['metric_value'])
-        
-        print(f"\n{'='*60}")
-        print("Model Promotion Summary")
-        print(f"{'='*60}")
-        
-        results = {}
-        
-        # Process each model
-        for model in all_models:
-            registry_name = model['registry_name']
-            version = model['version']
-            
-            if (model['registry_name'] == best_model['registry_name'] and 
-                model['version'] == best_model['version']):
-                # Promote best to Production
-                try:
-                    # Archive current production models
-                    current_prod = [v for v in self.mlflow_client.search_model_versions(f"name='{registry_name}'")
-                                  if v.current_stage == 'Production']
-                    for v in current_prod:
-                        if str(v.version) != str(version):
-                            self.mlflow_client.transition_model_version_stage(
-                                name=registry_name,
-                                version=str(v.version),
-                                stage='Archived'
-                            )
-                    
-                    self.mlflow_client.transition_model_version_stage(
-                        name=registry_name,
-                        version=str(version),
-                        stage='Production'
-                    )
-                    results[f"{registry_name}_v{version}"] = 'Production'
-                    print(f"✓ PRODUCTION: {registry_name} v{version} ({metric}={model['metric_value']:.4f}) ⭐")
-                    
-                    # Copy artifacts to production folder
-                    self._copy_artifacts_to_production_folder(registry_name, version)
-                    
-                except Exception as e:
-                    print(f"✗ Error promoting {registry_name} v{version}: {e}")
-            else:
-                # Stage all others
-                if model['stage'] == 'Production':
-                    try:
-                        self.mlflow_client.transition_model_version_stage(
-                            name=registry_name,
-                            version=str(version),
-                            stage='Staging'
-                        )
-                        results[f"{registry_name}_v{version}"] = 'Staging'
-                        print(f"  Staging:    {registry_name} v{version} ({metric}={model['metric_value']:.4f})")
-                    except Exception as e:
-                        print(f"✗ Error staging {registry_name} v{version}: {e}")
-        
-        print(f"{'='*60}\n")
-        return results
+    def promote_best_model_across_all(self, metric: str = 'f1_score') -> Optional[Dict[str, Any]]:
+            """
+            Scans all registered models, identifies the global best, 
+            and promotes it to Production while archiving the old champion.
+            """
+            # 1. Dynamically find all registered models (filtering by a prefix if needed)
+            registered_models = self.mlflow_client.search_registered_models()
+            all_candidates = []
 
+            for rm in registered_models:
+                name = rm.name
+                # We look for versions in 'Staging' or 'None' to find new candidates
+                versions = self.mlflow_client.search_model_versions(f"name='{name}'")
+                for v in versions:
+                    # Retrieve the specific metric from tags
+                    metric_val = v.tags.get(metric)
+                    if metric_val:
+                        all_candidates.append({
+                            'name': name,
+                            'version': v.version,
+                            'score': float(metric_val),
+                            'stage': v.current_stage,
+                            'run_id': v.run_id
+                        })
+
+            if not all_candidates:
+                print("No models with metrics found in registry.")
+                return None
+
+            # 2. Identify the "Challenger" (Best overall candidate)
+            challenger = max(all_candidates, key=lambda x: x['score'])
+            
+            # 3. Identify the current "Champion" (Production model)
+            current_champion = next((m for m in all_candidates if m['stage'] == 'Production'), None)
+
+            print(f"\n--- Promotion Analysis (Metric: {metric}) ---")
+            if current_champion:
+                print(f"Current Champion: {current_champion['name']} v{current_champion['version']} (Score: {current_champion['score']:.4f})")
+            print(f"Best Challenger:  {challenger['name']} v{challenger['version']} (Score: {challenger['score']:.4f})")
+
+            # 4. Promotion Logic: Only promote if challenger is better (or if no champion exists)
+            if not current_champion or challenger['score'] > current_champion['score']:
+                print(f"Found new best model! Promoting {challenger['name']} v{challenger['version']}...")
+                
+                # Archive old champion if it's a different model/version
+                if current_champion and (current_champion['version'] != challenger['version'] or current_champion['name'] != challenger['name']):
+                    self.mlflow_client.transition_model_version_stage(
+                        name=current_champion['name'],
+                        version=current_champion['version'],
+                        stage='Archived'
+                    )
+
+                # Promote Challenger
+                self.mlflow_client.transition_model_version_stage(
+                    name=challenger['name'],
+                    version=challenger['version'],
+                    stage='Production'
+                )
+                
+                # Sync artifacts
+                self._copy_artifacts_to_production_folder(challenger['name'], challenger['version'])
+                return challenger
+            else:
+                print("Current Production model remains superior. No promotion performed.")
+                return current_champion
 
 def main():
     """Main execution function with optimized workflow"""
@@ -599,7 +581,7 @@ def main():
     print("Promoting Best Model to Production")
     print("="*60)
     
-    trainer.promote_best_model_across_all(registry_names, metric='f1')
+    trainer.promote_best_model_across_all(metric='f1_score')
     
     print("\n" + "="*60)
     print("✓ Training Complete!")
