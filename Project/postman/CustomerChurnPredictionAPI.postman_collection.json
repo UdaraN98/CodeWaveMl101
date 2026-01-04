@@ -1,0 +1,82 @@
+{
+  "info": {
+    "name": "Customer Churn Prediction API",
+    "_postman_id": "7b8b9c14-6a2b-4ef5-9c6c-4d5e0b1f2b8a",
+    "description": "Requests to test the Customer Churn FastAPI service (health, schema, predict).\n\nBase URL defaults to http://127.0.0.1:8000",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Schema (required columns)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/schema",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "schema"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Predict (raw features)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"features\": {\n    \"Age\": 30,\n    \"Gender\": \"Female\",\n    \"Tenure\": 39,\n    \"Usage Frequency\": 14,\n    \"Support Calls\": 5,\n    \"Payment Delay\": 18,\n    \"Subscription Type\": \"Standard\",\n    \"Contract Length\": \"Annual\",\n    \"Total Spend\": 932,\n    \"Last Interaction\": 17\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/predict",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "predict"
+          ]
+        },
+        "description": "Send raw (unprocessed) feature values. Keys should match the preprocessor input columns. Use GET /schema to confirm required_columns.\n\nExpected response fields:\n- prediction: 0/1\n- probability: optional\n- model_path: which model.pkl was loaded"
+      },
+      "response": []
+    }
+  ]
+}

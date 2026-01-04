@@ -147,6 +147,57 @@ python main.py
 python main.py
 ```
 
+## Running the Inference API
+
+This starts an API server that loads the exported **best model** from `mlruns/best_model_artifacts/` and uses `Data/preprocessor.pkl` to transform raw inputs.
+
+### 1) Ensure dependencies are installed
+
+```bash
+cd /Users/udaranilupul/Documents/Freelancing/CodeWave/CodeWaveMl101/Project
+uv sync
+```
+
+### 2) Export the best model artifacts (once, or after retraining)
+
+```bash
+/opt/homebrew/bin/python3 Scripts/export_best_artifacts.py --experiment-name customer_churn_optimization --metric f1
+```
+
+### 3) Run the API
+
+```bash
+uvicorn api.main:app --reload --port 8000
+```
+
+### 4) Call the API
+
+- Health: `GET http://127.0.0.1:8000/health`
+- Input schema: `GET http://127.0.0.1:8000/schema`
+- Predict: `POST http://127.0.0.1:8000/predict`
+
+Example request body:
+
+```json
+{
+    "features": {
+        "Gender": "Male",
+        "Contract Length": "Monthly",
+        "Subscription Type": "Basic",
+        "Age": 35,
+        "Tenure": 12
+    }
+}
+```
+
+Notes:
+
+- The API expects **raw** fields that match the columns the preprocessor was fit on. Use `/schema` to see `required_columns`.
+- Override paths if needed:
+    - `BEST_MODEL_DIR` (folder containing `model.pkl`)
+    - `BEST_MODEL_PATH` (direct path to `model.pkl`)
+    - `PREPROCESSOR_PATH` (path to `preprocessor.pkl`)
+
 ## Dependencies
 
 Key libraries used in this project:
