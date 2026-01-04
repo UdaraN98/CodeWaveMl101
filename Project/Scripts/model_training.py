@@ -4,6 +4,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score, 
@@ -510,6 +511,7 @@ def main():
     # Register models
     trainer.register_model('logistic_regression', LogisticRegression, random_state=42, max_iter=1000)
     trainer.register_model('decision_tree', DecisionTreeClassifier, random_state=42)
+    trainer.register_model('random_forest', RandomForestClassifier, random_state=42) ## new model added
     
     registry_names = []
     
@@ -576,6 +578,36 @@ def main():
             stage='Staging'
         )
         registry_names.append('churn_predictor_dt')
+
+    # Random Forest
+    param_dist_rf = {
+        'n_estimators': lambda trial: trial.suggest_int('n_estimators', 50, 300),
+        'max_depth': lambda trial: trial.suggest_int('max_depth', 2, 20),
+        'min_samples_split': lambda trial: trial.suggest_int('min_samples_split', 2, 20),
+        'min_samples_leaf': lambda trial: trial.suggest_int('min_samples_leaf', 1, 10),
+        'criterion': lambda trial: trial.suggest_categorical('criterion', ['gini', 'entropy'])
+    }   
+    with mlflow.start_run(run_name='random_forest_optuna'):
+        trainer._log_git_info()
+        mlflow.log_param('n_trials', 20)
+        
+        study_rf, best_rf = trainer.optuna_optimization_with_model(
+            RandomForestClassifier, param_dist_rf, n_trials=20, model_name='rf_optuna'
+        )
+        
+        rf_metrics = trainer.evaluate_model('rf_optuna', model=best_rf)
+        trainer._log_metrics_to_mlflow(rf_metrics)
+        trainer.trained_models_metrics['random_forest'] = rf_metrics
+        
+        trainer.register_model_to_registry(
+            model=best_rf,
+            model_name='rf_optuna',
+            registry_name='churn_predictor_rf',
+            metrics=rf_metrics,
+            model_description=f'Optuna-optimized Random Forest. Params: {study_rf.best_params}',
+            stage='Staging'
+        )
+        registry_names.append('churn_predictor_rf')
     
     # ==================== Model Comparison ====================
     print("\n" + "="*60)
