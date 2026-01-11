@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  customer-churn-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - BEST_MODEL_METRIC=f1
+      - MLFLOW_EXPERIMENT_NAME=customer_churn_optimization
+    volumes:
+      # Mount model artifacts (if you want live updates during development)
+      - ./mlruns:/app/mlruns:ro
+      - ./Data:/app/Data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    container_name: customer-churn-api
+
+  # Optional: MLflow tracking server (if you want to run it in container too)
+  mlflow-server:
+    image: python:3.13-slim
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/mlflow/mlruns
+      - ./mlartifacts:/mlflow/mlartifacts
+    working_dir: /mlflow
+    command: >
+      sh -c "
+        pip install mlflow &&
+        mlflow server 
+          --backend-store-uri file:///mlflow/mlruns 
+          --default-artifact-root file:///mlflow/mlartifacts 
+          --host 0.0.0.0 
+          --port 5000
+      "
+    container_name: mlflow-server
+    profiles: ["mlflow"]  # Optional service, activate with: docker-compose --profile mlflow up
+
+networks:
+  default:
+    name: customer-churn-network

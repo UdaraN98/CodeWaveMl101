@@ -1,0 +1,289 @@
+name: Deploy Model API
+
+on:
+  push:
+    branches:
+      - main
+      - week-5-ci-cd-final
+    paths:
+      - 'Project/**'
+      - '.github/workflows/cd.yml'
+  
+  workflow_dispatch:
+    inputs:
+      deployment_target:
+        description: 'Choose deployment target'
+        required: true
+        default: 'local'
+        type: choice
+        options:
+          - local
+          - staging
+          - production
+
+jobs:
+  # First, ensure CI has passed
+  check-ci:
+    runs-on: self-hosted
+    outputs:
+      model-trained: ${{ steps.check.outputs.result }}
+    steps:
+      - name: Check if model artifacts exist
+        id: check
+        working-directory: ./Project
+        run: |
+          if [ -d "mlruns/best_model_artifacts" ] && [ "$(ls -A mlruns/best_model_artifacts 2>/dev/null)" ]; then
+            echo "result=true" >> $GITHUB_OUTPUT
+            echo "✅ Model artifacts found"
+          else
+            echo "result=false" >> $GITHUB_OUTPUT
+            echo "❌ No model artifacts found. Run CI pipeline first."
+            exit 1
+          fi
+
+  # Build and test the API
+  build-and-test:
+    needs: check-ci
+    runs-on: self-hosted
+    
+    env:
+      DOCKER_IMAGE_NAME: customer-churn-api
+      DOCKER_TAG: ${{ github.sha }}
+      LOCAL_DATA_SOURCE: /Users/udaranilupul/Documents/Freelancing/CodeWave/CodeWaveMl101/Project/Data
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Copy model artifacts and data
+        working-directory: ./Project
+        run: |
+          # Ensure we have the latest model artifacts
+          if [ ! -d "mlruns/best_model_artifacts" ]; then
+            echo "❌ Model artifacts not found!"
+            exit 1
+          fi
+          
+          # Copy data if needed
+          if [ -d "${LOCAL_DATA_SOURCE}" ]; then
+            mkdir -p Data
+            cp -v "${LOCAL_DATA_SOURCE}/"*.csv Data/ || true
+          fi
+          
+          echo "✅ Artifacts and data prepared for container build"
+
+      - name: Build Docker image
+        working-directory: ./Project
+        run: |
+          docker build \
+            --tag ${DOCKER_IMAGE_NAME}:${DOCKER_TAG} \
+            --tag ${DOCKER_IMAGE_NAME}:latest \
+            .
+          
+          echo "✅ Docker image built: ${DOCKER_IMAGE_NAME}:${DOCKER_TAG}"
+
+      - name: Test API in container
+        working-directory: ./Project
+        run: |
+          # Start container in background
+          docker run -d \
+            --name test-api-${GITHUB_RUN_ID} \
+            --publish 8080:8000 \
+            --env BEST_MODEL_METRIC=f1 \
+            ${DOCKER_IMAGE_NAME}:${DOCKER_TAG}
+          
+          # Wait for API to be ready
+          echo "⏳ Waiting for API to start..."
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health >/dev/null 2>&1; then
+              echo "✅ API is ready!"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "❌ API failed to start within 30 seconds"
+              docker logs test-api-${GITHUB_RUN_ID}
+              exit 1
+            fi
+            sleep 1
+          done
+          
+          # Test endpoints
+          echo "🧪 Testing API endpoints..."
+          
+          # Test health endpoint
+          curl -f http://localhost:8080/health
+          
+          # Test schema endpoint
+          curl -f http://localhost:8080/schema
+          
+          # Test prediction endpoint with sample data
+          curl -f -X POST http://localhost:8080/predict \
+            -H "Content-Type: application/json" \
+            -d '{
+              "features": {
+                "age": 35,
+                "gender": "Male",
+                "tenure": 12,
+                "usage_frequency": 15,
+                "support_calls": 2,
+                "payment_delay": 0,
+                "subscription_type": "Standard",
+                "contract_length": "Monthly",
+                "total_spend": 500,
+                "last_interaction": 30
+              }
+            }'
+          
+          echo "✅ All API tests passed!"
+
+        # Clean up test container
+      - name: Cleanup test container
+        if: always()
+        run: |
+          docker stop test-api-${GITHUB_RUN_ID} || true
+          docker rm test-api-${GITHUB_RUN_ID} || true
+
+  # Deploy based on target
+  deploy:
+    needs: [check-ci, build-and-test]
+    runs-on: self-hosted
+    
+    env:
+      DOCKER_IMAGE_NAME: customer-churn-api
+      DOCKER_TAG: ${{ github.sha }}
+      DEPLOYMENT_TARGET: ${{ inputs.deployment_target || 'local' }}
+
+    steps:
+      - name: Deploy to Local
+        if: env.DEPLOYMENT_TARGET == 'local'
+        run: |
+          echo "🚀 Deploying to local environment..."
+          
+          # Stop existing container if running
+          docker stop customer-churn-api-local || true
+          docker rm customer-churn-api-local || true
+          
+          # Start new container
+          docker run -d \
+            --name customer-churn-api-local \
+            --publish 8000:8000 \
+            --env BEST_MODEL_METRIC=f1 \
+            --restart unless-stopped \
+            ${DOCKER_IMAGE_NAME}:${DOCKER_TAG}
+          
+          echo "✅ Local deployment complete!"
+          echo "🌐 API available at: http://localhost:8000"
+          
+          # Wait and verify deployment
+          sleep 5
+          curl -f http://localhost:8000/health
+          echo "✅ Health check passed!"
+
+      - name: Deploy to Staging
+        if: env.DEPLOYMENT_TARGET == 'staging'
+        run: |
+          echo "🚀 Deploying to staging environment..."
+          
+          # Stop existing staging container
+          docker stop customer-churn-api-staging || true
+          docker rm customer-churn-api-staging || true
+          
+          # Start staging container on different port
+          docker run -d \
+            --name customer-churn-api-staging \
+            --publish 8001:8000 \
+            --env BEST_MODEL_METRIC=f1 \
+            --restart unless-stopped \
+            ${DOCKER_IMAGE_NAME}:${DOCKER_TAG}
+          
+          echo "✅ Staging deployment complete!"
+          echo "🌐 Staging API available at: http://localhost:8001"
+          
+          # Verify staging deployment
+          sleep 5
+          curl -f http://localhost:8001/health
+
+      - name: Deploy to Production
+        if: env.DEPLOYMENT_TARGET == 'production'
+        run: |
+          echo "🚀 Deploying to production environment..."
+          echo "⚠️  This would deploy to your production environment"
+          echo "🔧 Configure this section based on your production setup"
+          
+          # Example for production deployment:
+          # - Push to container registry
+          # - Deploy to cloud service (AWS/GCP/Azure)
+          # - Update load balancer
+          # - Run smoke tests
+          
+          echo "✅ Production deployment placeholder completed"
+
+  # Post-deployment verification
+  verify-deployment:
+    needs: deploy
+    runs-on: self-hosted
+    if: always()
+    
+    env:
+      DEPLOYMENT_TARGET: ${{ inputs.deployment_target || 'local' }}
+    
+    steps:
+      - name: Verify Local Deployment
+        if: env.DEPLOYMENT_TARGET == 'local'
+        run: |
+          echo "🔍 Verifying local deployment..."
+          
+          # Check container is running
+          if docker ps | grep -q customer-churn-api-local; then
+            echo "✅ Container is running"
+          else
+            echo "❌ Container is not running"
+            exit 1
+          fi
+          
+          # Extended health checks
+          sleep 10
+          for i in {1..5}; do
+            if curl -f http://localhost:8000/health >/dev/null 2>&1; then
+              echo "✅ Health check $i/5 passed"
+            else
+              echo "❌ Health check $i/5 failed"
+              exit 1
+            fi
+            sleep 2
+          done
+          
+          echo "🎉 Local deployment verified successfully!"
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "# 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** ${{ env.DEPLOYMENT_TARGET }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ env.DEPLOYMENT_TARGET }}" == "local" ]; then
+            echo "**API URL:** http://localhost:8000" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ env.DEPLOYMENT_TARGET }}" == "staging" ]; then
+            echo "**API URL:** http://localhost:8001" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🧪 Quick Test Commands:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Health check" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ env.DEPLOYMENT_TARGET }}" == "local" ]; then
+            echo "curl http://localhost:8000/health" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ env.DEPLOYMENT_TARGET }}" == "staging" ]; then
+            echo "curl http://localhost:8001/health" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Get schema" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ env.DEPLOYMENT_TARGET }}" == "local" ]; then
+            echo "curl http://localhost:8000/schema" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ env.DEPLOYMENT_TARGET }}" == "staging" ]; then
+            echo "curl http://localhost:8001/schema" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo '```' >> $GITHUB_STEP_SUMMARY

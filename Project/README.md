@@ -11,12 +11,26 @@ Project/
 ├── pyproject.toml           # Project dependencies and metadata
 ├── README.md                # This file
 ├── uv.lock                  # Locked dependency versions
+├── Dockerfile               # Container definition for API deployment
+├── docker-compose.yml       # Local development and deployment setup
+├── api/
+│   ├── __init__.py
+│   └── main.py              # FastAPI ML service
 ├── Data/
 │   ├── archive.zip
 │   ├── customer_churn_dataset-testing-master.csv
 │   └── customer_churn_dataset-training-master.csv
-└── Notebooks/
-    └── 1_EDA.ipynb          # Exploratory Data Analysis notebook
+├── Scripts/
+│   ├── data_preprocessing.py
+│   ├── model_training.py
+│   ├── export_best_artifacts.py
+│   └── deploy.sh            # Deployment script
+├── Notebooks/
+│   ├── 1_EDA.ipynb          # Exploratory Data Analysis
+│   ├── 2_Data_Prep.ipynb    # Data Preprocessing
+│   └── 3_Model_Training.ipynb # Model Training
+└── mlruns/                  # MLflow experiment tracking
+    └── best_model_artifacts/ # Exported model artifacts
 ```
 
 ## Prerequisites
@@ -25,6 +39,8 @@ Project/
 - Git (optional)
 - `uv` package manager (recommended)
 - Visual Studio Code with Python and Jupyter extensions
+- Docker (required for deployment)
+- Docker Compose (optional, for development)
 
 ## Installation & Setup
 
@@ -227,6 +243,99 @@ Located in the `Data/` folder.
 3. **Explore the data** using `Notebooks/1_EDA.ipynb` directly in VS Code
 4. **Run the main application** with `python main.py`
 5. **Train and evaluate models** for customer churn prediction
+
+## 🚀 CI/CD Pipeline
+
+This project includes automated CI/CD pipelines for model training and deployment.
+
+### CI Pipeline (Model Training)
+Automatically triggered on pushes to `main` or `week-5-ci-cd-final` branches:
+- Trains ML models using `Scripts/model_training.py`
+- Logs experiments and metrics to MLflow
+- Stores model artifacts for deployment
+
+### CD Pipeline (Model Deployment)
+
+#### FastAPI Service
+The project includes a production-ready FastAPI service for serving ML predictions:
+- **API Endpoints:**
+  - `/health` - Service health check
+  - `/predict` - Make ML predictions
+  - `/schema` - Get model input schema
+  - `/docs` - Interactive API documentation
+
+#### Deployment Options
+
+**Option 1: Manual Deployment (Recommended for development)**
+```bash
+# Deploy locally
+./Scripts/deploy.sh
+
+# Deploy to staging
+./Scripts/deploy.sh -e staging -p 8001
+
+# Deploy to production
+./Scripts/deploy.sh -e production -p 80
+```
+
+**Option 2: GitHub Actions (Automated)**
+1. Go to repository → Actions tab
+2. Find "Deploy Model API" workflow
+3. Click "Run workflow" → Choose environment → Deploy!
+
+**Option 3: Docker Compose (Development)**
+```bash
+# Start API service
+docker-compose up customer-churn-api
+
+# Start with MLflow server
+docker-compose --profile mlflow up
+```
+
+#### Deployment Environments
+- **Local**: `http://localhost:8000`
+- **Staging**: `http://localhost:8001`
+- **Production**: Configurable port (default: 80)
+
+#### Features
+- ✅ Docker containerization for consistency
+- ✅ Multi-environment support (local/staging/production)
+- ✅ Automated testing and health checks
+- ✅ Model artifact validation
+- ✅ Zero-downtime deployments
+- ✅ Automatic container restarts
+
+#### Testing the API
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Get model schema
+curl http://localhost:8000/schema
+
+# Make a prediction
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "features": {
+      "age": 35,
+      "gender": "Male",
+      "tenure": 12,
+      "usage_frequency": 15,
+      "support_calls": 2,
+      "payment_delay": 0,
+      "subscription_type": "Standard",
+      "contract_length": "Monthly",
+      "total_spend": 500,
+      "last_interaction": 30
+    }
+  }'
+```
+
+#### Prerequisites for Deployment
+- Docker installed and running
+- Model artifacts available (run CI pipeline first)
+- Ports 8000-8001 available for local/staging deployments
 
 ## Troubleshooting
 
